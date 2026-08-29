@@ -2549,15 +2549,16 @@
             showToast(`ซ่อนสาขา ${branchCode} ออกจากเอกสารแล้ว`);
         }
 
-        function restoreBranchInDocument(branchCode) {
+        async function restoreBranchInDocument(branchCode, syncImmediately = false) {
             if (!branchCode) return;
             loadDocumentHiddenBranches();
-            documentHiddenBranches = documentHiddenBranches.filter(c => c !== branchCode);
+            const branchKey = normalizeBranchLookupCode(branchCode);
+            documentHiddenBranches = documentHiddenBranches.filter(c => normalizeBranchLookupCode(c) !== branchKey);
             saveDocumentHiddenBranches();
             markDocumentOverridesDirty(branchCode);
             renderShippingDocument();
             updateManageDocBranchesModalContent();
-            pushDocumentSummaryToServer(false, true, null, 'restore_branch');
+            await pushDocumentSummaryToServer(syncImmediately, true, [branchCode], syncImmediately ? 'restore_branch_after_transfer' : 'restore_branch');
             showToast(`นำสาขา ${branchCode} กลับมารวมในเอกสารแล้ว`);
         }
 
@@ -3587,10 +3588,15 @@
         function setBookingMoveMode(mode) {
             bookingBranchMoveMode = mode === 'split' ? 'split' : 'all';
             const isSplit = bookingBranchMoveMode === 'split';
+            loadDocumentHiddenBranches();
+            const alreadyInTarget = bookingBranchMovePreview && String(bookingBranchMovePreview.current_booking || '').toUpperCase() === String(currentBookingNo || '').toUpperCase();
+            const isHiddenHere = bookingBranchMovePreview && documentHiddenBranches.some(code => normalizeBranchLookupCode(code) === normalizeBranchLookupCode(bookingBranchMovePreview.branch_code));
             document.getElementById('moveModeAllBtn').className = `border-2 ${isSplit ? 'border-slate-200 bg-white text-slate-700' : 'border-blue-600 bg-blue-50 text-blue-800'} rounded-xl p-3 font-black text-sm`;
             document.getElementById('moveModeSplitBtn').className = `border-2 ${isSplit ? 'border-purple-600 bg-purple-50 text-purple-800' : 'border-slate-200 bg-white text-slate-700'} rounded-xl p-3 font-black text-sm`;
-            document.getElementById('moveSplitFields').classList.toggle('hidden', !isSplit || !bookingBranchMovePreview);
-            document.getElementById('confirmMoveBranchBtn').textContent = isSplit ? 'ยืนยันแบ่งยอดเข้า Booking นี้' : 'ยืนยันย้ายทั้งสาขา';
+            document.getElementById('moveSplitFields').classList.toggle('hidden', !isSplit || !bookingBranchMovePreview || alreadyInTarget);
+            document.getElementById('confirmMoveBranchBtn').textContent = alreadyInTarget
+                ? (isHiddenHere ? 'นำสาขากลับมาแสดงในเอกสาร' : 'สาขานี้อยู่ในเอกสารแล้ว')
+                : (isSplit ? 'ยืนยันแบ่งยอดเข้า Booking นี้' : 'ยืนยันย้ายทั้งสาขา');
         }
         function openBookingBranchMove() {
             if (!currentBookingNo) return showAlert('ไม่พบ Booking ปลายทาง', 'ฟังก์ชันนี้ใช้เมื่อเปิดงานด้วย Booking เท่านั้น');
@@ -3631,21 +3637,44 @@
         function selectBranchForMove(index) {
             const item = (window.bookingBranchMoveOptions || [])[index]; if (!item) return;
             bookingBranchMovePreview = { ...item, wave_no: document.getElementById('moveWaveInput').value.replace(/\D/g, '') };
+            loadDocumentHiddenBranches();
+            const alreadyInTarget = String(item.current_booking || '').toUpperCase() === String(currentBookingNo || '').toUpperCase();
+            const isHiddenHere = documentHiddenBranches.some(code => normalizeBranchLookupCode(code) === normalizeBranchLookupCode(item.branch_code));
             document.querySelectorAll('.move-branch-choice').forEach((button, buttonIndex) => button.classList.toggle('border-blue-600', buttonIndex === index));
             const closed = item.is_closed ? '✅ ปิดจบแล้ว' : '🟡 ยังไม่ Stamp ปิดสาขา';
-            document.getElementById('moveBranchPreview').innerHTML = `<div class="font-black text-lg">เลือก: ${escapeDocumentText(item.branch_code)} — ${escapeDocumentText(item.branch_name)}</div><div class="grid grid-cols-2 gap-2 mt-2"><div><b>Booking ปัจจุบัน</b><br>${escapeDocumentText(item.current_booking || '-')}</div><div><b>สถานะ</b><br>${closed}</div><div><b>LPN ยิงแล้ว</b><br>${item.lpn_scanned}/${item.lpn_total}</div><div><b>ยอดนับ</b><br>${item.box_qty} กล่อง / ${item.pallet_count} พาเลท</div></div><div class="mt-2 text-xs text-red-700 font-bold">ยืนยันแล้ว Booking ${escapeDocumentText(currentBookingNo)} จะรวมยอดเดิมทันที ไม่ต้องยิงใหม่</div>`;
+            const actionHint = alreadyInTarget
+                ? (isHiddenHere ? `สาขานี้ย้ายเข้า Booking นี้แล้ว แต่ถูกซ่อนอยู่ กดยืนยันเพื่อนำกลับมาแสดง` : `สาขานี้อยู่ใน Booking ${escapeDocumentText(currentBookingNo)} และแสดงในเอกสารแล้ว`)
+                : `ยืนยันแล้ว Booking ${escapeDocumentText(currentBookingNo)} จะรวมยอดเดิมทันที ไม่ต้องยิงใหม่`;
+            document.getElementById('moveBranchPreview').innerHTML = `<div class="font-black text-lg">เลือก: ${escapeDocumentText(item.branch_code)} — ${escapeDocumentText(item.branch_name)}</div><div class="grid grid-cols-2 gap-2 mt-2"><div><b>Booking ปัจจุบัน</b><br>${escapeDocumentText(item.current_booking || '-')}</div><div><b>สถานะ</b><br>${closed}</div><div><b>LPN ยิงแล้ว</b><br>${item.lpn_scanned}/${item.lpn_total}</div><div><b>ยอดนับ</b><br>${item.box_qty} กล่อง / ${item.pallet_count} พาเลท</div></div><div class="mt-2 text-xs ${alreadyInTarget && isHiddenHere ? 'text-amber-700' : 'text-red-700'} font-bold">${actionHint}</div>`;
             document.getElementById('moveBranchPreview').classList.remove('hidden');
             const totals = item.totals || {};
             ['M', 'Red', 'Blue', 'Green', 'Black', 'Pallet'].forEach(name => {
                 const input = document.getElementById('moveSplit' + name);
                 if (input) { input.value = 0; input.max = parseInt(totals[name.toLowerCase()]) || 0; }
             });
-            document.getElementById('moveSplitFields').classList.toggle('hidden', bookingBranchMoveMode !== 'split');
-            document.getElementById('confirmMoveBranchBtn').disabled = String(item.current_booking || '').toUpperCase() === String(currentBookingNo || '').toUpperCase();
+            document.getElementById('moveSplitFields').classList.toggle('hidden', bookingBranchMoveMode !== 'split' || alreadyInTarget);
+            document.getElementById('confirmMoveBranchBtn').disabled = alreadyInTarget && !isHiddenHere;
+            setBookingMoveMode(bookingBranchMoveMode);
         }
         async function confirmBookingBranchMove() {
             const reason = document.getElementById('moveReasonInput').value;
-            if (!bookingBranchMovePreview || !reason) return showAlert('ข้อมูลไม่ครบ', 'กรุณาตรวจสอบสาขาและเลือกเหตุผล');
+            if (!bookingBranchMovePreview) return showAlert('ข้อมูลไม่ครบ', 'กรุณาเลือกสาขาก่อน');
+            loadDocumentHiddenBranches();
+            const alreadyInTarget = String(bookingBranchMovePreview.current_booking || '').toUpperCase() === String(currentBookingNo || '').toUpperCase();
+            const isHiddenHere = documentHiddenBranches.some(code => normalizeBranchLookupCode(code) === normalizeBranchLookupCode(bookingBranchMovePreview.branch_code));
+            if (alreadyInTarget) {
+                if (!isHiddenHere) return showAlert('สาขานี้อยู่ในเอกสารแล้ว', `${bookingBranchMovePreview.branch_code}\nBooking ${currentBookingNo}`);
+                showLoading('กำลังนำสาขากลับมาแสดง...');
+                try {
+                    await restoreBranchInDocument(bookingBranchMovePreview.branch_code, true);
+                    closeBookingBranchMove();
+                    showAlert('นำสาขากลับมาแล้ว', `${bookingBranchMovePreview.branch_code}\nแสดงในเอกสาร Booking ${currentBookingNo} เรียบร้อย`, 'border-green-600', true);
+                } catch (error) {
+                    showAlert('นำสาขากลับมาไม่สำเร็จ', error.message || String(error));
+                } finally { hideLoading(); }
+                return;
+            }
+            if (!reason) return showAlert('ข้อมูลไม่ครบ', 'กรุณาเลือกเหตุผล');
             const isSplit = bookingBranchMoveMode === 'split';
             const split = isSplit ? {
                 m: parseInt(document.getElementById('moveSplitM').value) || 0,
@@ -3671,6 +3700,10 @@
                     saveCurrentWaveDataCache();
                     renderShippingDocument();
                     shippingDocumentVerifiedAt = Date.now();
+                    loadDocumentHiddenBranches();
+                    if (documentHiddenBranches.some(code => normalizeBranchLookupCode(code) === normalizeBranchLookupCode(bookingBranchMovePreview.branch_code))) {
+                        await restoreBranchInDocument(bookingBranchMovePreview.branch_code, true);
+                    }
                 };
                 try {
                     await refreshMovedDocument();
@@ -7262,7 +7295,7 @@
             <button onclick="palletModalBack()" class="mt-2.5 w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm">← กลับไปเลือกสาขา</button>
         </div>
     </div>
-    <div class="fixed bottom-1 left-1.5 z-[1400] text-[9px] leading-none text-slate-400 font-bold pointer-events-none select-none">Pro LPN Scanner · v1.8.3 (2026-08-29)</div>
+    <div class="fixed bottom-1 left-1.5 z-[1400] text-[9px] leading-none text-slate-400 font-bold pointer-events-none select-none">Pro LPN Scanner · v1.8.4 (2026-08-29)</div>
     <div id="quickTools" class="fixed z-[1500] flex flex-col gap-2" style="bottom:16px;right:12px">
         <button onclick="openHelp()" title="วิธีใช้งาน / คำอธิบาย" class="w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white font-black shadow-lg text-lg opacity-90">?</button>
         <button onclick="toggleBigText()" id="bigTextBtn" title="ปรับตัวอักษรใหญ่" class="w-11 h-11 rounded-full bg-slate-700 hover:bg-slate-800 text-white font-black shadow-lg text-base opacity-90">ก+</button>
