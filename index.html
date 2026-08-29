@@ -3664,10 +3664,24 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `HTTP ${res.status}`);
                 closeBookingBranchMove();
-                const latest = await fetchFreshCurrentJobData(); applyWaveDataToScreen(latest.data, latest.isWaveOnly); saveCurrentWaveDataCache(); renderShippingDocument(); shippingDocumentVerifiedAt = Date.now();
-                showAlert(isSplit ? 'แบ่งยอดเข้ารถเรียบร้อย' : 'ย้ายสาขาเข้ารถเรียบร้อย', isSplit
+                let refreshDelayed = false;
+                const refreshMovedDocument = async () => {
+                    const latest = await fetchFreshCurrentJobData();
+                    applyWaveDataToScreen(latest.data, latest.isWaveOnly);
+                    saveCurrentWaveDataCache();
+                    renderShippingDocument();
+                    shippingDocumentVerifiedAt = Date.now();
+                };
+                try {
+                    await refreshMovedDocument();
+                } catch (refreshError) {
+                    refreshDelayed = true;
+                    console.warn('Branch move saved; document refresh will retry:', refreshError);
+                    setTimeout(() => refreshMovedDocument().catch(error => console.warn('Branch move refresh retry:', error)), 1500);
+                }
+                showAlert(isSplit ? 'แบ่งยอดเข้ารถเรียบร้อย' : 'ย้ายสาขาเข้ารถเรียบร้อย', (isSplit
                     ? `${bookingBranchMovePreview.branch_code}\nสาขานี้อยู่ทั้ง ${data.source_booking} และ ${data.target_booking}\nBooking นี้รับเพิ่ม ${split.m + split.red + split.blue + split.green + split.black} กล่อง`
-                    : `${bookingBranchMovePreview.branch_code}\n${data.previous_booking || '-'} → ${data.target_booking}\nยอดเดิมถูกนำมาใช้ ไม่ต้องสแกนใหม่`, 'border-green-600', true);
+                    : `${bookingBranchMovePreview.branch_code}\n${data.previous_booking || '-'} → ${data.target_booking}\nยอดเดิมถูกนำมาใช้ ไม่ต้องสแกนใหม่`) + (refreshDelayed ? '\n\nบันทึกแล้ว ระบบกำลังดึงหน้าเอกสารให้ใหม่อัตโนมัติ' : ''), 'border-green-600', true);
             } catch (e) { showAlert('ย้ายสาขาไม่สำเร็จ', e.message || String(e)); }
             finally { hideLoading(); }
         }
@@ -7248,7 +7262,7 @@
             <button onclick="palletModalBack()" class="mt-2.5 w-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm">← กลับไปเลือกสาขา</button>
         </div>
     </div>
-    <div class="fixed bottom-1 left-1.5 z-[1400] text-[9px] leading-none text-slate-400 font-bold pointer-events-none select-none">Pro LPN Scanner · v1.8.2 (2026-08-25)</div>
+    <div class="fixed bottom-1 left-1.5 z-[1400] text-[9px] leading-none text-slate-400 font-bold pointer-events-none select-none">Pro LPN Scanner · v1.8.3 (2026-08-29)</div>
     <div id="quickTools" class="fixed z-[1500] flex flex-col gap-2" style="bottom:16px;right:12px">
         <button onclick="openHelp()" title="วิธีใช้งาน / คำอธิบาย" class="w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white font-black shadow-lg text-lg opacity-90">?</button>
         <button onclick="toggleBigText()" id="bigTextBtn" title="ปรับตัวอักษรใหญ่" class="w-11 h-11 rounded-full bg-slate-700 hover:bg-slate-800 text-white font-black shadow-lg text-base opacity-90">ก+</button>
