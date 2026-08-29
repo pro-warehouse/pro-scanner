@@ -3833,6 +3833,45 @@
                 }
             });
 
+            // ⚡ Fallback อัตโนมัติ: ถ้ายังไม่มีการสแกนกล่องเลย (ยอดรวมที่สแกนเป็น 0)
+            // ให้ดึงยอดเป้าหมายตามสี/ประเภทกล่องที่มีในระบบ/Control Outbound มาลงในตารางเอกสารให้อัตโนมัติทันที
+            if ((autoM + autoRed + autoBlue + autoGreen + autoBlack) === 0 && branchItems.length > 0) {
+                branchItems.forEach(item => {
+                    if (item.combinedWith) return;
+                    const qty = parseInt(item.Total_Qty || item.total_qty || item.qty) || 1;
+                    const prefix = String(item.lpn || '').substring(0, 2).toUpperCase();
+                    const color = String(item.color || '').toUpperCase();
+                    const type = String(item.scan_type || '').toUpperCase();
+
+                    if (item.isMaster) {
+                        const combinedChildren = branchItems.filter(child => child.combinedWith === item.lpn);
+                        const masterPart = getColorBreakdown(item)[0];
+                        const childPart = combinedChildren
+                            .flatMap(child => getColorBreakdown(child))
+                            .find(Boolean);
+                        const physicalContainer = masterPart || childPart;
+
+                        if (physicalContainer) {
+                            addQtyToSummary(prefix, physicalContainer.color, physicalContainer.type, 1);
+                        } else {
+                            addQtyToSummary(prefix, color, type, 1);
+                        }
+                        return;
+                    }
+
+                    if (isDirectQtyPrefix(prefix)) {
+                        autoM += qty;
+                    } else {
+                        const breakdown = getColorBreakdown(item);
+                        if (breakdown.length > 0) {
+                            breakdown.forEach(part => addQtyToSummary(prefix, part.color, part.type, part.qty));
+                        } else {
+                            addQtyToSummary(prefix, color, type, qty);
+                        }
+                    }
+                });
+            }
+
             // สาขาที่แบ่งอยู่หลาย Booking ใช้ยอดจัดสรรจากส่วนกลางเป็นค่าหลัก
             const bookingSplit = branchItems.find(item => item.booking_split_summary)?.booking_split_summary;
             if (bookingSplit) {
