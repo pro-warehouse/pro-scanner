@@ -3525,8 +3525,19 @@
         }
 
         async function openShippingDocument(preferredBranchCode = '', bypassOtherDevices = false, documentType = 'shipping') {
-            if (!currentWave || allLpnsInWave.length === 0) {
-                showAlert('ยังไม่มีข้อมูล Wave', 'กรุณาเลือก Wave ก่อนเปิดเอกสารใบคุมส่งสินค้า');
+            // Booking บางรายการอาจไม่ได้ส่งฟิลด์ waves กลับมา แต่ในรายการ LPN ยังมี wave_no ครบ
+            // กู้บริบท Wave จากข้อมูลที่โหลดอยู่ เพื่อไม่ให้หน้าเอกสารถูกบล็อกโดยตัวแปรว่าง
+            if (!currentWave && Array.isArray(allLpnsInWave) && allLpnsInWave.length > 0) {
+                const recoveredWaves = Array.from(new Set(allLpnsInWave
+                    .map(item => String((item && (item.wave_no || item.wave)) || '').replace(/\D/g, ''))
+                    .filter(Boolean)));
+                if (recoveredWaves.length > 0) {
+                    activeWavesList = recoveredWaves;
+                    currentWave = recoveredWaves.join(', ');
+                }
+            }
+            if (!Array.isArray(allLpnsInWave) || allLpnsInWave.length === 0) {
+                showAlert('ยังไม่มีข้อมูลเอกสาร', 'ไม่พบข้อมูลสาขาใน Wave/Booking นี้ กรุณารีเฟรชข้อมูลแล้วลองอีกครั้ง');
                 return;
             }
 
@@ -5103,6 +5114,17 @@
             }
 
             allLpnsInWave = data.lpn_list || [];
+            // ป้องกัน Booking ที่ backend ส่ง waves ว่าง ทั้งที่แต่ละ LPN มี wave_no อยู่แล้ว
+            // เอกสารและการซิงค์ต้องใช้รายการ Wave ที่กู้คืนจากข้อมูลจริงชุดเดียวกัน
+            const recoveredWaves = Array.from(new Set([
+                ...(Array.isArray(activeWavesList) ? activeWavesList : []),
+                data.wave_no,
+                ...allLpnsInWave.map(item => item && (item.wave_no || item.wave))
+            ].map(value => String(value || '').replace(/\D/g, '')).filter(Boolean)));
+            if (recoveredWaves.length > 0) {
+                activeWavesList = recoveredWaves;
+                currentWave = recoveredWaves.join(', ');
+            }
             allLpnsInWave.forEach(item => {
                 const cleanBranchName = normalizeBranchDisplayName(item.branch_name, item.branch);
                 item.branch_name = cleanBranchName || 'ไม่พบชื่อสาขา';
